@@ -37,10 +37,12 @@
 *.hex
 
 # Debug files
+Debug/
 *.dSYM/
 *.su
 *.idb
 *.pdb
+*.cyclo
 
 # Kernel Module Compile Results
 *.mod*
