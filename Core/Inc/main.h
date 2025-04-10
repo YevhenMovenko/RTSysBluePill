@@ -95,8 +95,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define LED_Pin GPIO_PIN_13
-#define LED_GPIO_Port GPIOC
+#define SD_CSpi_pin_Pin GPIO_PIN_0
+#define SD_CSpi_pin_GPIO_Port GPIOB
 #define VOICE_EMULATOR_Pin GPIO_PIN_15
 #define VOICE_EMULATOR_GPIO_Port GPIOA
 

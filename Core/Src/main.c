@@ -19,13 +19,14 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-
-
 #include "ds3231.h"
+#include "fatfs_sd.h"
+#include"string.h"
 //#include "i2c_addrScaner.h"
 
 //#define I2C_SCANER
@@ -44,6 +45,10 @@
 
 //#define SET_TIME_DATE
 
+
+//#include "INA226.h"
+
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +57,6 @@
 uint8_t dataCl[]="\r";
 int isSent =1;
 
-int q;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_rx;
@@ -66,7 +70,7 @@ char CDC_tx_buff[64];
 char CDC_rx_buff[8];
 uint8_t CDC_rx_flag = 0;
 uint32_t I2C_speed[4] = { 100000, 200000, 300000, 400000 };
-uint32_t res;
+
 /*==========================================*/
 
 /*++++++++ DS3231 values ++++++++++++*/
@@ -79,11 +83,12 @@ char DS3231_get_Hour[64];
 char DS3231_get_Week[64];
 char DS3231_get_Date[64];
 char DS3231_get_Yar[64];
-
+char data_to_SDCARD[64];
 uint8_t seconds;
 uint8_t minutes;
 uint8_t hours;
 uint8_t countAlarm1 = 0;
+uint8_t numRoad = 0;
 /*==========================================*/
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
@@ -97,7 +102,7 @@ uint8_t I2C_Roll_Speed(uint16_t addr);
 void printr(uint8_t reg) {
 	sprintf(I2C_tx_buff_Rg, "Reg 0x%02x ", reg);
 
-	  HAL_UART_Transmit_IT(&huart1, I2C_tx_buff_Rg, 64);
+	  HAL_UART_Transmit_IT(&huart1, (uint8_t*)I2C_tx_buff_Rg, 64);
 	  isSent = 0;
        while(!isSent){
        }
@@ -111,11 +116,11 @@ void printr(uint8_t reg) {
 		printf("%d", (val >> (7 - i)) & 1);
 	}
 	sprintf(I2C_tx_buff_St, "status %d\n\r", s);
-	  HAL_UART_Transmit_IT(&huart1, I2C_tx_buff_St, 64);
+	  HAL_UART_Transmit_IT(&huart1, (uint8_t*)I2C_tx_buff_St, 64);
 	  isSent = 0;
      while(!isSent){
      }
-	//printf("\n");
+
 }
 
 /* USER CODE END PTD */
@@ -132,6 +137,8 @@ void printr(uint8_t reg) {
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+
+SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_tx;
@@ -151,6 +158,7 @@ static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
 void StartTask_1(void const * argument);
 void StartTask_2(void const * argument);
@@ -163,10 +171,47 @@ void StartTask_2(void const * argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/*------------FreeRTOS---------*/
 typedef  uint32_t TaskProfiler;
 
 TaskProfiler StartTask_1_Profiler, StartTask_2_Profiler, Default_Tread_Profiler;
+/*--------------End FreeRROS-------*/
 
+/*---------- SD-CARD-----------*/
+FATFS fs; // file sysytem
+FIL fil; // file
+FRESULT fresult; // to store the result
+char buffer[1024]; //to store data
+
+UINT br,bw; // file read/write count
+
+/* capacity related variables */
+FATFS *pfs;
+DWORD fre_clust;
+uint32_t total, free_space;
+
+/*to send the data to the UART */
+void send_uart(char *string){
+
+uint8_t len = strlen(string);
+HAL_UART_Transmit(&huart1, (uint8_t*)string, len, 2000);//transmit in block mode
+}
+
+/* to find the size of data in the buffer */
+int bufsize(char *buf){
+int i = 0;
+while(*buf++ !='\0')i++;
+return i;
+}
+
+void bufclear(void){ //clear buffer
+for (int i = 0; i < 1024; i++){
+	buffer[i] = '\0';
+}
+
+}
+/*----------End SD CARD--------*/
 /* USER CODE END 0 */
 
 /**
@@ -193,7 +238,6 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-int a;
 
   /* USER CODE END SysInit */
 
@@ -203,6 +247,8 @@ int a;
   MX_USART1_UART_Init();
   MX_I2C1_Init();
   MX_TIM3_Init();
+  MX_SPI1_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
 /*++++++++++++ DS3231 I2C communication +++++++++++++++*/
@@ -246,6 +292,48 @@ int a;
    DS3231_SetAlarm2Minute(min);
    }
    */
+
+   /*Mount SD Card*/
+   fresult = f_mount(&fs, "", 0);
+   if(fresult != FR_OK) send_uart("error in mounting SD CARD...\n\r");
+    else send_uart("SD CARD mounted successfully..\n\r");
+
+/*------------Card capasity details ---------- */
+
+   /* Check free space*/
+   f_getfree("", &fre_clust, &pfs);
+   total = (uint32_t)((pfs ->n_fatent - 2) * pfs ->csize * 0.5);
+   sprintf(buffer, "SD CARD Total Size: \t%lu\n\r", total);
+   send_uart(buffer);
+   bufclear();
+   free_space = (uint32_t)(fre_clust * pfs -> csize * 0.5);
+   sprintf(buffer, "SD CARD Free Space: \t%lu\n\r", free_space);
+   send_uart(buffer);
+
+
+
+   /*Open file to write/create a file if it doesn`t exist*/
+   fresult = f_open(&fil,"file1.md",FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
+
+   /*Writing text*/
+   //fresult = f_puts("Tis data is from the First FILE\n\n\r", &fil);
+   fresult = f_puts("n,d,h,m,s,u,i\r", &fil);
+
+   /*Close file*/
+   fresult = f_close(&fil);
+   send_uart("File.md ceated and the data is written \n\r");
+
+   /*open file to read*/
+   fresult = f_open(&fil, "file.md", FA_READ);
+
+   /*Read string from the file*/
+   f_gets(buffer, fil.fsize, &fil);
+   send_uart(buffer);
+
+   /*Close file*/
+   f_close(&fil);
+   bufclear();
+
   /* USER CODE END 2 */
 
   /* Create the mutex(es) */
@@ -377,6 +465,44 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -421,16 +547,18 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_GPIOA);
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_GPIOB);
   /**TIM3 GPIO Configuration
-  PA6   ------> TIM3_CH1
-  PA7   ------> TIM3_CH2
+  PB4   ------> TIM3_CH1
+  PB5   ------> TIM3_CH2
   */
-  GPIO_InitStruct.Pin = LL_GPIO_PIN_6|LL_GPIO_PIN_7;
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_4|LL_GPIO_PIN_5;
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
   GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  LL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  LL_GPIO_AF_RemapPartial_TIM3();
 
 }
 
@@ -501,17 +629,27 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SD_CSpi_pin_GPIO_Port, SD_CSpi_pin_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(VOICE_EMULATOR_GPIO_Port, VOICE_EMULATOR_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : LED_Pin */
-  GPIO_InitStruct.Pin = LED_Pin;
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SD_CSpi_pin_Pin */
+  GPIO_InitStruct.Pin = SD_CSpi_pin_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SD_CSpi_pin_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : VOICE_EMULATOR_Pin */
   GPIO_InitStruct.Pin = VOICE_EMULATOR_Pin;
@@ -548,10 +686,28 @@ minutes = DS3231_GetMinute();
 
 hours = DS3231_GetHour();
 
+numRoad++;
 
 sprintf(DS3231_get_Hour, "time is: %d:%d:%d\n\r", hours, minutes, seconds);
-HAL_UART_Transmit_IT(&huart1, DS3231_get_Hour, 64);
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)DS3231_get_Hour, 64);
 isSent = 0;
+
+
+/*-----working with SDCARD----------*/
+
+/*Open file to write/create a file if it doesn`t exist*/
+sprintf(data_to_SDCARD, "%d,%d,%d,%d\r", numRoad,hours, minutes, seconds);
+
+
+   /*Writing text*/
+   fresult = f_open(&fil,"file1.md",FA_OPEN_ALWAYS | FA_WRITE);
+   fresult = f_lseek(&fil, fil.fsize);
+   fresult = f_puts(data_to_SDCARD, &fil);
+   /*Close file*/
+   f_close(&fil);
+   bufclear();
+
+/*---end working with SDCARD ------*/
 
     osDelay(5000);
   }
