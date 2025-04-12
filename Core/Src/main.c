@@ -27,6 +27,7 @@
 #include "ds3231.h"
 #include "fatfs_sd.h"
 #include"string.h"
+
 //#include "i2c_addrScaner.h"
 
 //#define I2C_SCANER
@@ -47,7 +48,7 @@
 
 
 //#include "INA226.h"
-
+#include "Autofox_INA226_c.h"
 
 /* USER CODE END Includes */
 
@@ -90,6 +91,23 @@ uint8_t hours;
 uint8_t countAlarm1 = 0;
 uint8_t numRoad = 0;
 /*==========================================*/
+
+/*++++++ AutoFox_INA226 +++++++++*/
+AutoFox_INA226 autoFox_ina226;
+
+const uint8_t aI2C_Address=0x40;
+//double aShuntResistor_Ohms=0.1;
+//double aMaxCurrent_Amps=3.2767;
+
+uint32_t aShuntResistor_Ohms=0.1;
+uint32_t aMaxCurrent_Amps=3.2767;
+
+int32_t voltage_uV;
+int32_t carrent_mA;
+int32_t power_W;
+char get_voltage_uV[64];
+/*======END  AutoFox_INA226 ==============*/
+
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 	isSent =1;
@@ -313,28 +331,44 @@ int main(void)
 
 
    /*Open file to write/create a file if it doesn`t exist*/
-   fresult = f_open(&fil,"file1.md",FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
+   fresult = f_open(&fil,"data.csv",FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
 
    /*Writing text*/
    //fresult = f_puts("Tis data is from the First FILE\n\n\r", &fil);
-   fresult = f_puts("n,d,h,m,s,u,i\r", &fil);
+
+   fresult = f_puts("hours,minutes,seconds,voltage_uV,carrent_A, power_W\r", &fil);
 
    /*Close file*/
    fresult = f_close(&fil);
-   send_uart("File.md ceated and the data is written \n\r");
+   send_uart("data.csv ceated and the data is written \n\r");
 
    /*open file to read*/
-   fresult = f_open(&fil, "file.md", FA_READ);
+
+  // fresult = f_open(&fil, "data.csv", FA_READ);
 
    /*Read string from the file*/
-   f_gets(buffer, fil.fsize, &fil);
-   send_uart(buffer);
+   //f_gets(buffer, fil.fsize, &fil);
+   //send_uart(buffer);
 
    /*Close file*/
    f_close(&fil);
    bufclear();
 
-  /* USER CODE END 2 */
+
+   /*---------------AutoFox_INA226_Init ---------------*/
+  //uint8_t checADDR;
+   status checADDR = AutoFox_INA226_CheckI2cAddress(aI2C_Address);
+
+   AutoFox_INA226_Constructor(&autoFox_ina226);
+
+   AutoFox_INA226_Init(&autoFox_ina226, aI2C_Address, aShuntResistor_Ohms, aMaxCurrent_Amps);
+
+
+
+
+   /*=============END AutoFox_INA226_Init ===============*/
+
+   /* USER CODE END 2 */
 
   /* Create the mutex(es) */
   /* definition and creation of uart_newText */
@@ -687,20 +721,35 @@ minutes = DS3231_GetMinute();
 hours = DS3231_GetHour();
 
 numRoad++;
+//voltage_uV = 12.113;
+carrent_mA = 0;
+power_W = voltage_uV * carrent_mA;
 
 sprintf(DS3231_get_Hour, "time is: %d:%d:%d\n\r", hours, minutes, seconds);
 HAL_UART_Transmit_IT(&huart1, (uint8_t*)DS3231_get_Hour, 64);
 isSent = 0;
 
+while (!isSent){};
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
+while (!isSent){};
 
+
+voltage_uV = AutoFox_INA226_GetBusVoltage_uV(&autoFox_ina226);
+sprintf(get_voltage_uV, "Voltage uV: %d\n\r", voltage_uV);
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)get_voltage_uV, 64);
+isSent = 0;
+
+while (!isSent){};
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
+while (!isSent){};
 /*-----working with SDCARD----------*/
 
 /*Open file to write/create a file if it doesn`t exist*/
-sprintf(data_to_SDCARD, "%d,%d,%d,%d\r", numRoad,hours, minutes, seconds);
+sprintf(data_to_SDCARD, "%d,%d,%d,%d,%d,%d\r", hours, minutes, seconds,voltage_uV,carrent_mA, power_W);
 
 
    /*Writing text*/
-   fresult = f_open(&fil,"file1.md",FA_OPEN_ALWAYS | FA_WRITE);
+   fresult = f_open(&fil,"data.csv",FA_OPEN_ALWAYS | FA_WRITE);
    fresult = f_lseek(&fil, fil.fsize);
    fresult = f_puts(data_to_SDCARD, &fil);
    /*Close file*/
@@ -709,7 +758,10 @@ sprintf(data_to_SDCARD, "%d,%d,%d,%d\r", numRoad,hours, minutes, seconds);
 
 /*---end working with SDCARD ------*/
 
-    osDelay(5000);
+
+
+
+   osDelay(5000);
   }
   /* USER CODE END 5 */
 }
