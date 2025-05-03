@@ -32,6 +32,7 @@
 
 //#define I2C_SCANER
 
+//#define TERMINAL_CONNECT
 
 
 #ifdef I2C_SCANER
@@ -99,13 +100,16 @@ const uint8_t aI2C_Address=0x40;
 //double aShuntResistor_Ohms=0.1;
 //double aMaxCurrent_Amps=3.2767;
 
-uint32_t aShuntResistor_Ohms=0.1;
+uint32_t aShuntResistor_Ohms=0.01;
 uint32_t aMaxCurrent_Amps=3.2767;
 
 int32_t voltage_uV;
 int32_t carrent_mA;
 int32_t power_W;
+int32_t shuntVolt_uV;
 char get_voltage_uV[64];
+char get_carrent_mA[64];
+char get_shuntVolt_uV[64];
 /*======END  AutoFox_INA226 ==============*/
 
 
@@ -357,7 +361,7 @@ int main(void)
 
    /*---------------AutoFox_INA226_Init ---------------*/
   //uint8_t checADDR;
-   status checADDR = AutoFox_INA226_CheckI2cAddress(aI2C_Address);
+   //status checADDR = AutoFox_INA226_CheckI2cAddress(aI2C_Address);
 
    AutoFox_INA226_Constructor(&autoFox_ina226);
 
@@ -725,27 +729,57 @@ numRoad++;
 carrent_mA = 0;
 power_W = voltage_uV * carrent_mA;
 
+
+
+#ifdef TERMINAL_CONNECT
 sprintf(DS3231_get_Hour, "time is: %d:%d:%d\n\r", hours, minutes, seconds);
 HAL_UART_Transmit_IT(&huart1, (uint8_t*)DS3231_get_Hour, 64);
 isSent = 0;
-
 while (!isSent){};
 HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
 while (!isSent){};
-
+#endif
 
 voltage_uV = AutoFox_INA226_GetBusVoltage_uV(&autoFox_ina226);
-sprintf(get_voltage_uV, "Voltage uV: %d\n\r", voltage_uV);
+sprintf(get_voltage_uV, "Voltage uV: %ld\n\r", voltage_uV);
+
+#ifdef TERMINAL_CONNECT
+sprintf(get_voltage_uV, "Voltage uV: %ld\n\r", voltage_uV);
 HAL_UART_Transmit_IT(&huart1, (uint8_t*)get_voltage_uV, 64);
 isSent = 0;
-
 while (!isSent){};
 HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
 while (!isSent){};
+#endif
+
+carrent_mA = AutoFox_INA226_GetCurrent_uA(&autoFox_ina226);
+
+#ifdef TERMINAL_CONNECT
+sprintf(get_carrent_mA, "carrent mA: %ld\n\r", carrent_mA);
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)get_carrent_mA, 64);
+isSent = 0;
+while (!isSent){};
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
+while (!isSent){};
+#endif
+
+
+
+shuntVolt_uV = AutoFox_INA226_GetShuntVoltage_uV(&autoFox_ina226);
+
+#ifdef TERMINAL_CONNECT
+sprintf(get_shuntVolt_uV, "ShuntVoltage_uV: %ld\n\r", shuntVolt_uV);
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)get_shuntVolt_uV, 64);
+isSent = 0;
+while (!isSent){};
+HAL_UART_Transmit_IT(&huart1, (uint8_t*)"\r", 1);
+while (!isSent){};
+#endif
+
 /*-----working with SDCARD----------*/
 
 /*Open file to write/create a file if it doesn`t exist*/
-sprintf(data_to_SDCARD, "%d,%d,%d,%d,%d,%d\r", hours, minutes, seconds,voltage_uV,carrent_mA, power_W);
+sprintf(data_to_SDCARD, "%d,%d,%d,%ld,%ld,%ld\r", hours, minutes, seconds,voltage_uV,shuntVolt_uV, power_W);
 
 
    /*Writing text*/
